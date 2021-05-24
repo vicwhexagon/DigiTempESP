@@ -4,16 +4,9 @@
 #define copyrite " &#169; Jan 2021 VictorWheeler myapps@vicw.net use, modify and distribute without restrictions"
 #define compiledate __DATE__
 
-#ifndef APSSID
-#define APSSID  "DigiTempESP"
-#define APPSK   "DigiTempPSK"
-#endif
+#include "User_Settings.h"
 
-#if SERVER
-#define MY_HOSTNAME "DigiTemp-AP"          // Name for this client#define MY_HOSTNAME "DigiTemp-02"          // Name for this client
-#else
-#define MY_HOSTNAME "DigiTemp-02"          // Name for this client
-#endif
+String hostName;		// Name for Server or Client
 
 static const String SUID = String(ESP.getChipId());
 unsigned int suid = ESP.getChipId();
@@ -34,12 +27,24 @@ ESP8266WebServer Server;
 WebServer Server;
 #endif
 
-boolean DEBUG = true;	// Extra output to serial monitor
+boolean DEBUG = false; //true;	// Extra output to serial monitor
 boolean BiLED_DEBUG = false;
 
 /* Set these to your desired credentials. */
 const char *ssid = APSSID;
 const char *password = APPSK;
+
+extern volatile unsigned long timer0_millis;
+
+/*
+ * Whenever you want to reset millis():
+ */
+
+void resetClock(){
+	noInterrupts ();
+	timer0_millis = 0;
+	interrupts ();
+}
 
 void setupSerial(){
 	delay(1000);
@@ -57,15 +62,6 @@ void setupSerial(){
 	Serial.println(" Mode");
 }
 
-#include <DHT.h>
-#define DHTPIN 4     	// what digital pin the DHT22 is conected to
-                     	// D4 = D2 om nodemcu D2 = D2 on D2 mini lite
-#define DHTTYPE DHT22   // there are multiple kinds of DHT sensors
-//#define DHTTYPE DHT11
-DHT dht(DHTPIN, DHTTYPE);
-
-String hostName;		// Name for Server or Client
-
 // storage for temperatue and Humidity
 typedef  struct Th_temp{
   float h = 0.0;
@@ -75,7 +71,8 @@ typedef  struct Th_temp{
   float hic = 0.0;
   float tmax = -999.99;
   float tmin = 999.99;
-} Th_temp;
+  unsigned long last_update; // last update in milliseconds
+  } Th_temp;
 Th_temp Th_t;
 
 const int led = 13;   	// LED digital output
@@ -90,6 +87,7 @@ void setupBiLED(){
 
 void setupDHT() {
   dht.begin(55);	// default 55usec
+	Th_t.last_update = millis()/1000;
 }
 
 /*
@@ -112,17 +110,16 @@ if(DEBUG && BiLED_DEBUG) Serial.flush();
 }
 /*
  *
- *                        loopDHT()
+ *                        		loopDHT()
+ *                     Update from the local sensor
  *
  *
  */
 static int loopCountDHT = 0;
 void loopDHT() {
-	loopCountDHT++;   // Assuming 1 second loops
-
 	// Report every 20 seconds.
-	if (loopCountDHT > 20) { //15000) { loop cycle = 1 second
-		toggleBiLED();
+	if (loopCountDHT++ > 20) { //15000) { loop cycle = 1 second
+		//toggleBiLED();
 
 		// Reading temperature or humidity takes about 250 milliseconds!
 		// Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
@@ -159,30 +156,44 @@ void loopDHT() {
     		Th_t.tmin = Th_t.f;
     	}
     	loopCountDHT = 0;
+    	Th_t.last_update = millis();
 	} // loopCount = true
 }
 
 /*
  *
- *  instead of using delay() use the timmer for loop at 1 second stuff
+ *  instead of using delay() use the timer for loop at 1 second stuff
  *
  */
- unsigned long lastmills = 0;
- const unsigned long secondIntervill = 1000;
- // const unsigned long minuteIntervill = secondIntervill * 60;
- // const unsigned long hourIntervill = minuteIntervill * 60;
- // const unsigned long dayIntervill = hourIntervill * 24;
+ //unsigned long lastmills = 0;
+ const unsigned long secondInterval = 1000;
+ const unsigned long minuteInterval = secondInterval * 60;
+ const unsigned long hourInterval = minuteInterval * 60;
+ const unsigned long dayInterval = hourInterval * 24;
 
-unsigned long currentmills = secondIntervill;  // do it on first loop
 boolean timeElapsed(){
-  currentmills = millis();
-  if(currentmills - lastmills >= secondIntervill){
+	static unsigned long lastmills;
+	unsigned long currentmills = millis();
+  if(currentmills - lastmills >= secondInterval){
     lastmills = currentmills;
     return true;
   }
   return false;
 }
 
+//static unsigned long lastmills2;
+boolean timeElapsed(unsigned long time_Interval){
+  static unsigned long  lastmills;
+  unsigned long currentmills = millis();
+  if(currentmills - lastmills >= time_Interval){
+    lastmills = currentmills;
+    return true;
+  }
+  return false;
+}
+
+
+int still_here;		// for missed calls tell host we are still alive
 /*
 
    Basic web page to display temperature and humidity
@@ -190,7 +201,8 @@ boolean timeElapsed(){
 
 */
 String getData() {
-	if(DEBUG) Serial.println("Hello from getData()");
+	if(DEBUG){ Serial.print(F("Hello from getData() StillHere = ")); Serial.print(still_here);}
+	still_here = 0;	// Contacted reset counter
   String  content;
   content  = "<!DOCTYPE html>\n";
   content += "<html>\n";
@@ -199,6 +211,7 @@ String getData() {
   content += "<title>DigiTemp data cookie {{myHostName}} </title>\n";
   content += "</head>\n";
   content += "<body>\n";
+  // content += "h6 {color: #DFF2FB;}\n";
   //  content += "<p>";
   content += " Sensor: {{UID}} <br>\n";
   content += " {{MyIP}}  <br>\n";
@@ -207,10 +220,17 @@ String getData() {
   content += "Temperature: {{TempC}} <br>\n";
   content += "Temperature_Max: {{TempMax}} <br>\n";
   content += "Temperature_Min: {{TempMin}} <br>\n";
+  content += "Last Update: {{LastTime}} Seconds<br>\n";
 
   //  content += "</p>\n";
-  content += "Hostname: {{myHostName}}<br>\n";
-  content += "<a href=\"http://{{DiGiTempServerIP}}/\">DigiTemp Server</a>\n";
+  content += "Hostname: {{myHostName}}\n<br>\n";
+
+content += "<h6>"; content += copyrite; content += " "; content += compiledate; content += "</h6>";
+//  content += copyrite;
+//  content += "<br>\n Build date ";
+//  content += compiledate; content += "<br>\n";
+
+  content += "<a href=\"http://{{DiGiTempServerIP}}/\">DigiTemp AP</a><br>\n";
   content += "</body>";
   content += "</html>";
 
@@ -219,6 +239,8 @@ String getData() {
   char tempF[20];
   char tempMax[20];
   char tempMin[20];
+  char last[20];
+  sprintf(last, "%4u", ((unsigned int) (millis() - Th_t.last_update) / 1000));
   sprintf(tempC, "%02.2fC", Th_t.c);
   sprintf(tempF, "%04.2fF", Th_t.f);
   sprintf(humid, "%02.1f%%", Th_t.h);
@@ -232,6 +254,7 @@ String getData() {
   content.replace("{{UID}}", SUID);
   content.replace("{{MyIP}}", Server.client().localIP().toString()); //String(WiFi.localIP().toString()));
   content.replace("{{myHostName}}", hostName);
+  content.replace("{{LastTime}}", last);
   
   // Must be a better way to find the IP of the access point WiFi softAPSSID is good except Microsoft does not always support mDNS
   // Might try go-back except might of entered directly need to find host if !using AP 
@@ -244,25 +267,32 @@ String getData() {
   //content.replace("{{DiGiTempServerIP}}", WiFi.softAPSSID()); // DigiTemp Server
   Server.send(200, "text/html", content);
   Server.client().flush();
-  if(DEBUG)
-  Serial.println("getData() Called");
-  Serial.println(WiFi.BSSIDstr());
-  Serial.println(WiFi.SSID());	//*
-  Serial.println(WiFi.hostname());
-  Serial.println(WiFi.psk());
-  Serial.println(WiFi.softAPSSID()); //**
-  Serial.println(WiFi.softAPmacAddress());
-  Serial.println(WiFi.softAPIP().toString());
-  Serial.print(hostName); Serial.println(".local");  
-  Serial.println( Server.uri());
-  Serial.println(Server.client().localIP().toString());
-  Serial.println(Server.client().remoteIP().toString());
-  Serial.println(Server.urlDecode(WiFi.SSID()));  //*
-  Serial.println(WiFi.gatewayIP().toString());
-
+  if(DEBUG){
+	  Serial.println("getData() Called");
+  	  Serial.println(WiFi.BSSIDstr());
+  	  Serial.println(WiFi.SSID());	//*
+  	  Serial.println(WiFi.hostname());
+  	  Serial.println(WiFi.psk());
+  	  Serial.println(WiFi.softAPSSID()); //**
+  	  Serial.println(WiFi.softAPmacAddress());
+  	  Serial.println(WiFi.softAPIP().toString());
+  	  Serial.print(hostName); Serial.println(".local");
+  	  Serial.println( Server.uri());
+  	  Serial.println(Server.client().localIP().toString());
+  	  Serial.println(Server.client().remoteIP().toString());
+  	  Serial.println(Server.urlDecode(WiFi.SSID()));  //*
+  	  Serial.println(WiFi.gatewayIP().toString());
+  }
+  toggleBiLED();
   return content;
 }
 
+/*
+ *
+ * 		send_getData()
+ * 		called to send the data collected from the sensor.
+ *
+ */
 void send_getData(){
 	Server.send(200, "text/html", getData());
 	//Server.client().stop();
@@ -270,20 +300,6 @@ void send_getData(){
 
 }
 
-/*
- *                          StartPage 
- * 
- */
-void startPage() {
-  if(DEBUG) Serial.println("Hello from startPage()");
-  // Retrieve the value of AutoConnectElement with arg function of WebServer class.
-  // Values are accessible with the element name.
-  // it redirects to the root page without the content response.
-  Server.sendHeader("Location", String("http://") + Server.client().localIP().toString() + String("/"));
-  Server.send(302, "text/plain", "");
-  Server.client().flush();
-  Server.client().stop();
-}
 
 /*
  *                    Page Not Found
@@ -298,6 +314,17 @@ void notFoundPage() {
 	Server.client().stop();
 }
 
+/*
+ *
+ * 			reboot()
+ * 			Force a device (Server or Client) to reboot
+ *
+ */
+void reboot(){
+	Server.send(102, "<!DOCTYPE html> <script language=\"JavaScript\" type=\"text/javascript\"> setTimeout(\"window.history.go(-1)\",10000); </script>"); // go back after 10 seconds 1000 = 1 second
+	ESP.restart();
+	// ESP.reset();
+}
 
 #if SERVER
 #include "digiTempServer.h"

@@ -70,9 +70,10 @@ void rootPage() {
     "</script>"
     "</head>"
     "<body>"
-    "<h2 align=\"center\" style=\"color:lighttgray;margin:20px;\">{{MyIP}} {{myHostName}}</h2>"
+    "<h2 align=\"center\" style=\"color:lighttgray;margin:20px;\">{{MyIP}} {{myHostName}}</h2>\n"
     "<h3 align=\"center\" style=\"color:blue;margin:15px;\">{{TempHumi}}</h3>"
     "<h3 align=\"center\" style=\"color:gray;margin:15px;\">{{HighLow}}</h3>"
+    "<h6>" copyrite " " compiledate "</h6>"
     "</body>"
     "</html>";
 
@@ -101,17 +102,46 @@ void my_setup() {
 	Serial.println(hostName);
 	Serial.println(client_copyrite);
 	Serial.println(client_compiledate);
-	// Behavior a root path of ESP8266WebServer.
-	Server.on("/", rootPage);
-	Server.on("/start", startPage);   // Set NTP server trigger handler
-	Server.on("/getData", send_getData);  // Server read data and Keep Alive
 	Serial.println(Server.client().localIP().toString());
 }
 
-
-void my_loop() {
-	// Nothing To Do yet
+/*
+ *
+ * 				Kind of a watch-dog if this client has not been accessed in 300 seconds
+ * 				Re establish the connection.
+ *
+ *
+ */
+// int still_here defined and reset in getData()
+boolean still_alive(){
+	boolean retval = true;
+	if(still_here > (UPDATE_MINUTES * 3 * 60)){	// Number of seconds to try reconnect
+		if(DEBUG){Serial.print(F("Reseting connection to host still_here = ")); Serial.println(still_here);}
+		if(WiFi.reconnect()) {
+			still_here = 0;
+		}  else {
+			retval = false;
+		}
+	}
+	return retval;
 }
 
+void my_loop() {
+	if(!still_alive()){
+		Serial.println(F("*** Connection lost ***"));
+	}
+}
+
+/*
+ * 		Process any serial monitor input for this client
+ */
+void do_serial(char r){
+  if(r == '?') loopDHT();		// Need to do something with r may as well force update data
+  Serial.print(hostName);
+  Serial.print("\t");
+  Serial.print(WiFi.localIP().toString());
+  Serial.print("\t");
+  Serial.println(client_compiledate);
+}
 
 #endif

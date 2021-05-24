@@ -5,6 +5,9 @@
  * Auto connect with last used network able to enter new SSID and Passphrase
  *
  * Victor Wheeler myapps@vicw.net
+ *2021 / 05 / 24
+ *  BiLED toggles for update instead of every 1 second loop
+ *  UPDATE_MINUTES added to setup
  *
  */
 #define copyrite " &#169; Jan 2021 VictorWheeler myapps@vicw.net use, modify and distribute without restrictions"
@@ -12,7 +15,7 @@
 #include "Arduino.h"
 
 // To build for Host set to true set to false for Client
-#define SERVER true		// server or client
+//#define SERVER true		// server or client
 
 
 #include "DigiTempESP.h"
@@ -22,28 +25,38 @@
 void setup(){
 	setupSerial();
 	setupBiLED();		// Built-in LED
-	setupDHT();     	//  DigiTemp setup sensor
-	my_setup();			// Either server or client setup()
+	setupDHT();     	// DigiTemp setup for the hardware sensor device
+	my_setup();			// Setup for either server or client
+
+	Server.on("/", rootPage);
+	Server.on("/getData", send_getData);  // Server read data and Keep Alive
+	Server.on("/reboot", reboot);
 	Server.onNotFound(notFoundPage);
+	// TODO /favicon.ico not found
 	Server.begin();
 }
 
 
 void loop() {
-	if (timeElapsed()) {
-		toggleBiLED();
+	if (timeElapsed()) {	// 1 Second
+		if(DEBUG) toggleBiLED();
 		loopDHT();
+		still_here++;
 	}
+
 	if (Serial.available() > 0) {
-    #if SERVER
-      Serial.print("Host ");
-    #else
-      Serial.print("Client ");
-    #endif 
-		Serial.print(Serial.read());
-    Serial.print(" ");
-		Serial.println(WiFi.localIP().toString());
-	}
+		Serial.println();
+		Serial.print(ESP.getChipId());
+		Serial.print(F(" Runnig as "));
+    	#if SERVER
+			Serial.println(F("Host "));
+    	#else
+			Serial.println(F("Client "));
+    	#endif
+      char r = Serial.read();
+      do_serial(r);
+	} // Serial.avaiable()
+
 	my_loop();	// either Server or Client loop()
-	Server.handleClient();
+	Server.handleClient(); // Handle network requests
 }
